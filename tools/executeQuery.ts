@@ -3,7 +3,9 @@ import {
   McpToolResponse,
   createMcpSuccessResponse,
   createMcpErrorResponse,
+  createDatabaseUnavailableResponse,
   executePostgresQuery,
+  getConnectionStatus,
   debug,
 } from "./utils.js";
 
@@ -18,9 +20,18 @@ export const executeQuerySchema = z.object(executeQueryShape);
 
 // Tool implementation
 export async function executeQuery(
-  params: z.infer<typeof executeQuerySchema>
+  rawParams: any
 ): McpToolResponse {
   try {
+    // Validate and parse parameters
+    const params = executeQuerySchema.parse(rawParams);
+    
+    // Check database connection status
+    const connectionStatus = getConnectionStatus();
+    if (connectionStatus.status !== 'connected') {
+      return createDatabaseUnavailableResponse("execute SQL query");
+    }
+    
     const { query, params: queryParams, explain } = params;
 
     // Basic security checks
@@ -33,8 +44,18 @@ export async function executeQuery(
       /drop\s+schema/i,
       /truncate\s+table/i,
       /alter\s+table.*drop/i,
-      /delete\s+from.*without.*where/i, // This is a simplified check
+      /alter\s+table.*add/i, // Prevent adding columns
+      /create\s+table/i, // Prevent creating tables
+      /insert\s+into/i, // Prevent data insertion for security
     ];
+
+    // Check for DELETE/UPDATE without WHERE clause
+    if (trimmedQuery.startsWith('delete from') && !trimmedQuery.includes(' where ')) {
+      throw new Error(`DELETE without WHERE clause is not allowed for safety.`);
+    }
+    if (trimmedQuery.startsWith('update ') && trimmedQuery.includes(' set ') && !trimmedQuery.includes(' where ')) {
+      throw new Error(`UPDATE without WHERE clause is not allowed for safety.`);
+    }
 
     for (const pattern of dangerousPatterns) {
       if (pattern.test(query)) {
@@ -42,11 +63,6 @@ export async function executeQuery(
       }
     }
 
-    // Warn about DELETE/UPDATE without WHERE clause
-    if ((trimmedQuery.includes('delete from') || trimmedQuery.includes('update ')) && 
-        !trimmedQuery.includes('where')) {
-      debug("Warning: DELETE/UPDATE without WHERE clause detected");
-    }
 
     const startTime = Date.now();
     let results: any[];
@@ -67,6 +83,25 @@ export async function executeQuery(
     results = await executePostgresQuery(query, queryParams);
     const executionTime = Date.now() - startTime;
 
+    // Convert numeric strings to numbers for better usability
+    results = results.map(row => {
+      const convertedRow: any = {};
+      for (const [key, value] of Object.entries(row)) {
+        if (typeof value === 'string' && value !== '' && !isNaN(Number(value))) {
+          // Only convert if it's a proper numeric string
+          const numValue = Number(value);
+          if (Number.isInteger(numValue) || !Number.isNaN(numValue)) {
+            convertedRow[key] = numValue;
+          } else {
+            convertedRow[key] = value;
+          }
+        } else {
+          convertedRow[key] = value;
+        }
+      }
+      return convertedRow;
+    });
+
     // Determine query type
     let queryType = "SELECT";
     if (trimmedQuery.startsWith("insert")) {
@@ -82,10 +117,12 @@ export async function executeQuery(
     }
 
     const response = {
+      success: true,
       query_type: queryType,
       execution_time_ms: executionTime,
       row_count: results.length,
       data: results,
+      results: results, // Add for backward compatibility with tests
       ...(executionPlan && { execution_plan: executionPlan }),
       executed_at: new Date().toISOString(),
     };

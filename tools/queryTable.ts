@@ -3,10 +3,12 @@ import {
   McpToolResponse,
   createMcpSuccessResponse,
   createMcpErrorResponse,
+  createDatabaseUnavailableResponse,
   executePostgresQuery,
   paginationSchema,
   sortSchema,
   sanitizeIdentifier,
+  getConnectionStatus,
   debug,
 } from "./utils.js";
 
@@ -23,9 +25,17 @@ export const queryTableSchema = z.object(queryTableShape);
 
 // Tool implementation
 export async function queryTable(
-  params: z.infer<typeof queryTableSchema>
+  rawParams: any
 ): McpToolResponse {
   try {
+    // Validate and parse parameters
+    const params = queryTableSchema.parse(rawParams);
+    // Check database connection status
+    const connectionStatus = getConnectionStatus();
+    if (connectionStatus.status !== 'connected') {
+      return createDatabaseUnavailableResponse("query table data");
+    }
+    
     const { table, columns, where, pagination, sort } = params;
 
     // Validate table name
@@ -76,7 +86,8 @@ export async function queryTable(
     let orderClause = "";
     if (sort) {
       const sanitizedSortColumn = sanitizeIdentifier(sort.column);
-      orderClause = `ORDER BY ${sanitizedSortColumn} ${sort.direction}`;
+      const direction = sort.direction || 'ASC';
+      orderClause = `ORDER BY ${sanitizedSortColumn} ${direction}`;
     }
 
     // Build LIMIT/OFFSET clause

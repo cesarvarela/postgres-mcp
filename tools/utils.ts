@@ -7,6 +7,13 @@ dotenv.config();
 
 export const debug = Debug("postgres-mcp");
 
+// Connection state management
+export type ConnectionStatus = 'connected' | 'failed' | 'unknown';
+
+let connectionStatus: ConnectionStatus = 'unknown';
+let connectionError: string | null = null;
+let lastConnectionAttempt: Date | null = null;
+
 // Database connection pool
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -55,6 +62,35 @@ export async function executePostgresQuery<T = any>(
   }
 }
 
+// Database modification query function that returns both rows and affected count
+export async function executePostgresModification<T = any>(
+  query: string, 
+  params: any[] = []
+): Promise<{ rows: T[]; affectedCount: number }> {
+  const client: PoolClient = await pool.connect();
+  
+  try {
+    debug("Executing modification query: %s with params: %O", query, params);
+    
+    // Set query timeout if configured
+    if (process.env.QUERY_TIMEOUT) {
+      await client.query(`SET statement_timeout = ${process.env.QUERY_TIMEOUT}`);
+    }
+    
+    const result = await client.query(query, params);
+    debug("Modification completed successfully, affected %d rows, returned %d rows", result.rowCount, result.rows.length);
+    return {
+      rows: result.rows,
+      affectedCount: result.rowCount || 0
+    };
+  } catch (error: any) {
+    debug("Database modification error: %o", error);
+    throw new Error(`Database modification failed: ${error.message}`);
+  } finally {
+    client.release();
+  }
+}
+
 // Response creators
 export function createMcpSuccessResponse(data: any): McpToolResponse {
   return Promise.resolve({
@@ -81,6 +117,32 @@ export function createMcpErrorResponse(
         text: JSON.stringify({
           error: `Failed to ${operation}`,
           message: errorMessage,
+          timestamp: new Date().toISOString(),
+        }, null, 2),
+      },
+    ],
+  });
+}
+
+export function createDatabaseUnavailableResponse(operation: string): McpToolResponse {
+  const status = getConnectionStatus();
+  
+  return Promise.resolve({
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          error: `Cannot ${operation}`,
+          message: "Database connection is not available",
+          connection_status: status.status,
+          connection_error: status.error,
+          last_attempt: status.lastAttempt,
+          next_steps: [
+            "Use the 'connection-status' tool to check the connection details",
+            "Use 'connection-status' with retry: true to attempt reconnection",
+            "Verify your database configuration in .env file",
+            "Ensure PostgreSQL server is running and accessible"
+          ],
           timestamp: new Date().toISOString(),
         }, null, 2),
       },
@@ -120,12 +182,68 @@ export async function closePool(): Promise<void> {
   debug("Database pool closed");
 }
 
-// Test database connection
-export async function testConnection(): Promise<boolean> {
+// Connection status management functions
+export function getConnectionStatus(): {
+  status: ConnectionStatus;
+  error: string | null;
+  lastAttempt: Date | null;
+} {
+  return {
+    status: connectionStatus,
+    error: connectionError,
+    lastAttempt: lastConnectionAttempt,
+  };
+}
+
+export async function retryConnection(): Promise<boolean> {
+  debug("Attempting to retry database connection...");
+  lastConnectionAttempt = new Date();
+  
   try {
     const result = await executePostgresQuery("SELECT 1 as test");
-    return result.length === 1 && result[0].test === 1;
+    const success = result.length === 1 && result[0].test === 1;
+    
+    if (success) {
+      connectionStatus = 'connected';
+      connectionError = null;
+      debug("Connection retry successful");
+      return true;
+    } else {
+      connectionStatus = 'failed';
+      connectionError = "Connection test query returned unexpected result";
+      debug("Connection retry failed: unexpected result");
+      return false;
+    }
   } catch (error) {
+    connectionStatus = 'failed';
+    connectionError = error instanceof Error ? error.message : String(error);
+    debug("Connection retry failed: %o", error);
+    return false;
+  }
+}
+
+// Test database connection
+export async function testConnection(): Promise<boolean> {
+  lastConnectionAttempt = new Date();
+  
+  try {
+    const result = await executePostgresQuery("SELECT 1 as test");
+    const success = result.length === 1 && result[0].test === 1;
+    
+    if (success) {
+      connectionStatus = 'connected';
+      connectionError = null;
+      debug("Database connection test successful");
+      return true;
+    } else {
+      connectionStatus = 'failed';
+      connectionError = "Connection test query returned unexpected result";
+      debug("Connection test failed: unexpected result");
+      return false;
+    }
+  } catch (error) {
+    connectionStatus = 'failed';
+    connectionError = error instanceof Error ? error.message : String(error);
     debug("Connection test failed: %o", error);
     return false;
   }

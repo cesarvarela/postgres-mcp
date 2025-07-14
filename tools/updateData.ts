@@ -3,8 +3,10 @@ import {
   McpToolResponse,
   createMcpSuccessResponse,
   createMcpErrorResponse,
-  executePostgresQuery,
+  createDatabaseUnavailableResponse,
+  executePostgresModification,
   sanitizeIdentifier,
+  getConnectionStatus,
   debug,
 } from "./utils.js";
 
@@ -20,9 +22,17 @@ export const updateDataSchema = z.object(updateDataShape);
 
 // Tool implementation
 export async function updateData(
-  params: z.infer<typeof updateDataSchema>
+  rawParams: any
 ): McpToolResponse {
   try {
+    // Validate and parse parameters
+    const params = updateDataSchema.parse(rawParams);
+    // Check database connection status
+    const connectionStatus = getConnectionStatus();
+    if (connectionStatus.status !== 'connected') {
+      return createDatabaseUnavailableResponse("update data");
+    }
+    
     const { table, data, where, returning } = params;
 
     // Validate table name
@@ -84,20 +94,25 @@ export async function updateData(
     `;
 
     // Add RETURNING clause
-    if (returning && returning.length > 0) {
+    let hasEmptyReturning = false;
+    if (returning.length > 0) {
       const sanitizedReturning = returning.map((col: string) => 
         col === "*" ? "*" : sanitizeIdentifier(col)
       );
       updateQuery += ` RETURNING ${sanitizedReturning.join(", ")}`;
+    } else {
+      hasEmptyReturning = true;
     }
 
     debug("Executing update query");
-    const results = await executePostgresQuery(updateQuery, queryParams);
+    const result = await executePostgresModification(updateQuery, queryParams);
 
     const response = {
       table: sanitizedTable,
-      updated_count: results.length,
-      data: results,
+      updated_count: result.affectedCount,
+      data: hasEmptyReturning 
+        ? Array(result.affectedCount).fill({}) 
+        : result.rows,
       updated_at: new Date().toISOString(),
     };
 

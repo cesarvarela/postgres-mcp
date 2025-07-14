@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import dotenv from "dotenv";
@@ -13,6 +11,7 @@ import { insertData, insertDataShape } from "./tools/insertData.js";
 import { updateData, updateDataShape } from "./tools/updateData.js";
 import { deleteData, deleteDataShape } from "./tools/deleteData.js";
 import { getTableInfo, getTableInfoShape } from "./tools/getTableInfo.js";
+import { connectionStatus, connectionStatusShape } from "./tools/connectionStatus.js";
 
 // Load environment variables
 dotenv.config();
@@ -74,24 +73,30 @@ server.tool(
   getTableInfo
 );
 
+server.tool(
+  "connection-status",
+  "Check database connection status, view error details, and retry connection. Use retry: true to attempt reconnection when database is unavailable.",
+  connectionStatusShape,
+  connectionStatus
+);
+
 async function main() {
   // Test database connection on startup
   debug("Testing database connection...");
   const connectionOk = await testConnection();
   
   if (!connectionOk) {
-    debug("Failed to connect to database. Please check your connection settings.");
-    process.exit(1);
+    debug("Failed to connect to database. Server will start anyway - use connection-status tool to check details and retry.");
+  } else {
+    debug("Database connection successful");
   }
-  
-  debug("Database connection successful");
 
   // Set up transport and start server
   const transport = new StdioServerTransport();
   await server.connect(transport);
   
   debug("PostgreSQL MCP Server running on stdio");
-  debug("Available tools: query-table, get-schema, execute-query, insert-data, update-data, delete-data, get-table-info");
+  debug("Available tools: query-table, get-schema, execute-query, insert-data, update-data, delete-data, get-table-info, connection-status");
 }
 
 // Graceful shutdown handling

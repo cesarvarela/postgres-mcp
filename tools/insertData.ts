@@ -3,8 +3,10 @@ import {
   McpToolResponse,
   createMcpSuccessResponse,
   createMcpErrorResponse,
-  executePostgresQuery,
+  createDatabaseUnavailableResponse,
+  executePostgresModification,
   sanitizeIdentifier,
+  getConnectionStatus,
   debug,
 } from "./utils.js";
 
@@ -24,9 +26,18 @@ export const insertDataSchema = z.object(insertDataShape);
 
 // Tool implementation
 export async function insertData(
-  params: z.infer<typeof insertDataSchema>
+  rawParams: any
 ): McpToolResponse {
   try {
+    // Validate and parse parameters
+    const params = insertDataSchema.parse(rawParams);
+    
+    // Check database connection status
+    const connectionStatus = getConnectionStatus();
+    if (connectionStatus.status !== 'connected') {
+      return createDatabaseUnavailableResponse("insert data");
+    }
+    
     const { table, data, on_conflict, conflict_columns, returning } = params;
 
     // Validate table name
@@ -106,22 +117,28 @@ export async function insertData(
     }
 
     // Add RETURNING clause
-    if (returning && returning.length > 0) {
+    let hasEmptyReturning = false;
+    if (returning.length > 0) {
       const sanitizedReturning = returning.map((col: string) => 
         col === "*" ? "*" : sanitizeIdentifier(col)
       );
       insertQuery += ` RETURNING ${sanitizedReturning.join(", ")}`;
+    } else {
+      // Empty returning array - we need to track this case
+      hasEmptyReturning = true;
     }
 
     debug("Executing insert query with %d records", records.length);
-    const results = await executePostgresQuery(insertQuery, queryParams);
+    const result = await executePostgresModification(insertQuery, queryParams);
 
     const response = {
       table: sanitizedTable,
-      inserted_count: results.length,
+      inserted_count: result.affectedCount,
       records_provided: records.length,
       on_conflict_action: on_conflict,
-      data: results,
+      data: hasEmptyReturning 
+        ? Array(result.affectedCount).fill({}) 
+        : result.rows,
       inserted_at: new Date().toISOString(),
     };
 

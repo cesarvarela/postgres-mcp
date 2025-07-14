@@ -1,5 +1,5 @@
 {
-  "name": "postgres-mcp",
+  "name": "@cesarvarela/postgres-mcp",
   "version": "1.0.0",
   "description": "PostgreSQL MCP Server - Expose PostgreSQL database operations via Model Context Protocol",
   "type": "module",
@@ -9,7 +9,8 @@
     "build": "tsup",
     "start": "npx tsx index.ts",
     "dev": "npx tsx --watch index.ts",
-    "test": "vitest",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit"
   },
@@ -23,6 +24,10 @@
   ],
   "author": "Your Name",
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "debug": "^4.3.0",
@@ -31,9 +36,11 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^10.0.0",
     "@types/debug": "^4.1.12",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.10.0",
+    "testcontainers": "^10.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",

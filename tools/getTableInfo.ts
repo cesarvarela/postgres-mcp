@@ -3,8 +3,10 @@ import {
   McpToolResponse,
   createMcpSuccessResponse,
   createMcpErrorResponse,
+  createDatabaseUnavailableResponse,
   executePostgresQuery,
   sanitizeIdentifier,
+  getConnectionStatus,
   debug,
 } from "./utils.js";
 
@@ -29,9 +31,18 @@ interface TableStatistics {
 
 // Tool implementation
 export async function getTableInfo(
-  params: z.infer<typeof getTableInfoSchema>
+  rawParams: any
 ): McpToolResponse {
   try {
+    // Validate and parse parameters
+    const params = getTableInfoSchema.parse(rawParams);
+    
+    // Check database connection status
+    const connectionStatus = getConnectionStatus();
+    if (connectionStatus.status !== 'connected') {
+      return createDatabaseUnavailableResponse("get table information");
+    }
+    
     const { table, schema_name, include_statistics } = params;
 
     // Validate identifiers
@@ -157,7 +168,16 @@ export async function getTableInfo(
       try {
         const sizeResult = await executePostgresQuery(sizeQuery, [sanitizedSchema, sanitizedTable]);
         if (sizeResult.length > 0) {
-          statistics = sizeResult[0] as TableStatistics;
+          const rawStats = sizeResult[0];
+          statistics = {
+            estimated_row_count: parseInt(rawStats.estimated_row_count) || 0,
+            table_size_bytes: parseInt(rawStats.table_size_bytes) || 0,
+            table_size_pretty: rawStats.table_size_pretty,
+            index_size_bytes: parseInt(rawStats.index_size_bytes) || 0,
+            index_size_pretty: rawStats.index_size_pretty,
+            total_size_bytes: parseInt(rawStats.total_size_bytes) || 0,
+            total_size_pretty: rawStats.total_size_pretty,
+          };
         }
       } catch (error) {
         debug("Failed to get table statistics: %o", error);

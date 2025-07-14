@@ -3,7 +3,9 @@ import {
   McpToolResponse,
   createMcpSuccessResponse,
   createMcpErrorResponse,
+  createDatabaseUnavailableResponse,
   executePostgresQuery,
+  getConnectionStatus,
   debug,
 } from "./utils.js";
 
@@ -45,9 +47,18 @@ interface ConstraintInfo {
 
 // Tool implementation
 export async function getSchema(
-  params: z.infer<typeof getSchemaSchema>
+  rawParams: any
 ): McpToolResponse {
   try {
+    // Validate and parse parameters
+    const params = getSchemaSchema.parse(rawParams);
+    
+    // Check database connection status
+    const connectionStatus = getConnectionStatus();
+    if (connectionStatus.status !== 'connected') {
+      return createDatabaseUnavailableResponse("get database schema");
+    }
+    
     const { schema_name, table_pattern, include_columns, include_constraints } = params;
 
     // Base query for tables
@@ -74,6 +85,12 @@ export async function getSchema(
 
     debug("Fetching schema information for schema: %s", schema_name);
     const tables = await executePostgresQuery<TableInfo>(tablesQuery, queryParams);
+
+    // Initialize columns and constraints properties for all tables
+    tables.forEach(table => {
+      table.columns = [];
+      table.constraints = [];
+    });
 
     // Enhance tables with column information if requested
     if (include_columns && tables.length > 0) {

@@ -3,8 +3,11 @@ import {
   McpToolResponse,
   createMcpSuccessResponse,
   createMcpErrorResponse,
+  createDatabaseUnavailableResponse,
   executePostgresQuery,
+  executePostgresModification,
   sanitizeIdentifier,
+  getConnectionStatus,
   debug,
 } from "./utils.js";
 
@@ -20,9 +23,17 @@ export const deleteDataSchema = z.object(deleteDataShape);
 
 // Tool implementation
 export async function deleteData(
-  params: z.infer<typeof deleteDataSchema>
+  rawParams: any
 ): McpToolResponse {
   try {
+    // Validate and parse parameters
+    const params = deleteDataSchema.parse(rawParams);
+    // Check database connection status
+    const connectionStatus = getConnectionStatus();
+    if (connectionStatus.status !== 'connected') {
+      return createDatabaseUnavailableResponse("delete data");
+    }
+    
     const { table, where, confirm_delete, returning } = params;
 
     // Validate table name
@@ -90,20 +101,28 @@ export async function deleteData(
     let deleteQuery = `DELETE FROM ${sanitizedTable} WHERE ${whereClause}`;
 
     // Add RETURNING clause if specified
-    if (returning && returning.length > 0) {
-      const sanitizedReturning = returning.map((col: string) => 
-        col === "*" ? "*" : sanitizeIdentifier(col)
-      );
-      deleteQuery += ` RETURNING ${sanitizedReturning.join(", ")}`;
+    let hasEmptyReturning = false;
+    if (returning !== undefined) {
+      if (returning.length > 0) {
+        const sanitizedReturning = returning.map((col: string) => 
+          col === "*" ? "*" : sanitizeIdentifier(col)
+        );
+        deleteQuery += ` RETURNING ${sanitizedReturning.join(", ")}`;
+      } else {
+        hasEmptyReturning = true;
+      }
     }
 
-    debug("Executing delete query");
-    const results = await executePostgresQuery(deleteQuery, queryParams);
+    const result = await executePostgresModification(deleteQuery, queryParams);
 
     const response = {
       table: sanitizedTable,
-      deleted_count: results.length,
-      ...(returning && returning.length > 0 && { data: results }),
+      deleted_count: result.affectedCount,
+      ...(returning !== undefined && { 
+        data: hasEmptyReturning 
+          ? Array(result.affectedCount).fill({}) 
+          : result.rows 
+      }),
       deleted_at: new Date().toISOString(),
     };
 

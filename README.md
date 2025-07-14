@@ -77,6 +77,19 @@ Get detailed information about a specific table.
 - `schema_name` (string, optional): Schema name (default: "public")
 - `include_statistics` (boolean, optional): Include size and row count stats (default: true)
 
+### `connection-status`
+Check database connection status, view error details, and retry connection.
+
+**Parameters:**
+- `retry` (boolean, optional): Attempt to reconnect if connection is currently failed (default: false)
+
+**Returns:**
+- Current connection status ("connected", "failed", or "unknown")
+- Error details if connection failed
+- Last connection attempt timestamp
+- Troubleshooting information for failed connections
+- Result of retry attempt if retry was requested
+
 ## Installation
 
 ```bash
@@ -210,8 +223,20 @@ Found 15 users created in the last 7 days:
 
 ### Testing
 
+This project includes comprehensive tests using Vitest and Testcontainers for real PostgreSQL database testing.
+
+**Prerequisites:**
+- Docker must be installed and running (for testcontainers)
+
+**Run all tests:**
 ```bash
 npm test
+```
+
+**Run tests in watch mode:**
+```bash
+# Watch mode for development
+npm run test:watch
 ```
 
 ### Type Checking
@@ -231,8 +256,10 @@ npm run build
 - **index.ts**: Main server entry point and tool registration
 - **tools/utils.ts**: Shared utilities, database connection, and helper functions
 - **tools/*.ts**: Individual tool implementations
+- **tests/**: Comprehensive test suite
 - **tsup.config.ts**: Build configuration
 - **tsconfig.json**: TypeScript configuration
+- **vitest.config.ts**: Test configuration
 
 ## Error Handling
 
@@ -241,6 +268,50 @@ All tools include comprehensive error handling:
 - Database connection error handling
 - SQL execution error handling
 - Graceful error responses to MCP clients
+- **Graceful startup**: Server starts even if database is unavailable
+- **Connection recovery**: Ability to retry connections without restarting
+
+### Connection Troubleshooting
+
+If the database connection fails at startup or during operation, the server will continue running and provide helpful error information through the `connection-status` tool.
+
+**Common connection issues:**
+1. **Database server not running**: Ensure PostgreSQL is running and accessible
+2. **Invalid credentials**: Check username, password, and database name in your configuration  
+3. **Network connectivity**: Verify host, port, and firewall settings
+4. **SSL/TLS issues**: Check SSL configuration for production environments
+5. **Connection string format**: Ensure DATABASE_URL follows the correct format
+
+**To diagnose and fix connection issues:**
+
+1. **Check connection status:**
+   ```
+   Use the connection-status tool to see current status and error details
+   ```
+
+2. **Verify configuration:**
+   ```bash
+   # Check your .env file or environment variables
+   echo $DATABASE_URL
+   # Should look like: postgresql://username:password@host:port/database
+   ```
+
+3. **Test manually:**
+   ```bash
+   # Test connection with psql
+   psql $DATABASE_URL -c "SELECT 1;"
+   ```
+
+4. **Retry connection:**
+   ```
+   Use the connection-status tool with retry: true to attempt reconnection
+   ```
+
+**Graceful degradation:**
+- If database connection fails, all database tools will return helpful error messages
+- Error messages include specific troubleshooting steps
+- Tools automatically guide users to use `connection-status` for diagnosis and retry
+- Once connection is restored (via retry), all tools resume normal operation
 
 ## Contributing
 
